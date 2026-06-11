@@ -35,17 +35,20 @@
 
           <div id="status" class="status"></div>
           <div id="logs" class="logs"></div>
-          <button id="delete-denied" class="control-btn" style="margin-top: 12px; width: 100%; color: #c62828; border-color: #c62828;">Delete Denied</button>
+          <button id="delete-denied" class="control-btn" style="margin-top: 12px; width: 100%;">Delete</button>
         </div>
 
         <!-- Ground Truth Creation Controls -->
         <div id="create-controls" class="page-section">
-          <label style="margin-bottom: 8px; display:block;">Upload PDF</label>
-          <button id="upload-btn" class="upload-icon-btn" title="Click to upload PDF files">📁</button>
+          <button id="upload-btn" class="upload-icon-btn" title="Click to upload PDF files" style="font-size: 16px; padding: 2px 6px;">📁</button>
           <input type="file" id="file-input" multiple accept=".pdf" style="display:none;" />
           
-          <label style="margin-top: 16px; display:block;">Files</label>
+          <label style="margin-top: 16px; display:block;">Folders</label>
           <div id="pdf-list" class="pdf-list"></div>
+
+          <label style="margin-top: 16px; display:block;">Added Instances</label>
+          <div id="create-logs" class="logs" style="max-height: 200px;"></div>
+          <button id="export-instances-btn" class="control-btn" style="margin-top: 8px; width: 100%; color: #000;">Export</button>
         </div>
       </div>
 
@@ -66,13 +69,30 @@
 
         <!-- Ground Truth Creation Page -->
         <div id="create-page" class="page-section">
-          <div id="pdf-viewer" class="pdf-viewer">
-            <p style="color:#999; text-align:center; padding-top:50px;">Select a PDF to view</p>
+          <div style="display: flex; flex: 1; min-height: 0; gap: 16px;">
+            <div id="pdf-viewer" class="pdf-viewer">
+              <p style="color:#999; text-align:center; padding-top:50px;">Select a PDF to view</p>
+            </div>
+            
+            <div id="ai-result-container" style="display: none; flex: 0 0 350px; flex-direction: column; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; padding: 16px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 id="ai-result-title" style="margin: 0; font-size: 16px; color: #333;">Generated Instance</h3>
+                <button id="close-ai-btn" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #666; padding: 0;" title="Close view">&times;</button>
+              </div>
+              <pre id="ai-json-display" style="background: #fff; padding: 12px; border: 1px solid #ccc; white-space: pre-wrap; font-size: 13px; border-radius: 4px; flex: 1; overflow-y: auto; margin: 0;"></pre>
+              <div id="add-btn-container" style="display: flex; justify-content: flex-end; margin-top: 12px;">
+                <button id="add-instance-btn" class="control-btn" style="background: #000; color: #fff; border: none;">Add</button>
+              </div>
+            </div>
           </div>
+          
           <div class="pdf-nav">
+            <button id="pdf-multi-select" class="pdf-nav-btn">Multi-select</button>
             <button id="pdf-prev" class="pdf-nav-btn">← Prev</button>
             <span id="pdf-page-info" class="pdf-page-info">No PDF</span>
             <button id="pdf-next" class="pdf-nav-btn">Next →</button>
+            <button id="pdf-ai" class="pdf-nav-btn" style="color: #1a73e8; border-color: #1a73e8;">AI</button>
+            <button id="pdf-json-view" class="pdf-nav-btn" style="margin-left: auto; color: #000; border-color: #000;">JSON</button>
           </div>
         </div>
       </div>

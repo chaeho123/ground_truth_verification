@@ -12,6 +12,8 @@ const state = {
   currentPdfFile: null,
   currentPdfPage: 0,
   pdfPageCount: 0,
+  selectedPages: new Set(),
+  sessionCreated: [], // Track newly added questions
 };
 
 async function init(){
@@ -68,6 +70,22 @@ async function loadData(){
   refreshLogs();
 }
 
+function formatInstanceJSON(obj) {
+  if (Array.isArray(obj)) return obj.map(formatInstanceJSON);
+  if (obj && typeof obj === 'object') {
+    const newObj = {};
+    if ('question' in obj) newObj.question = obj.question;
+    if ('source' in obj) newObj.source = obj.source;
+    if ('pages' in obj) newObj.pages = obj.pages;
+    if ('relevant' in obj) newObj.relevant = formatInstanceJSON(obj.relevant);
+    for (let k in obj) {
+      if (!(k in newObj)) newObj[k] = obj[k];
+    }
+    return newObj;
+  }
+  return obj;
+}
+
 function bindUI(){
   document.getElementById('range').addEventListener('change', onRangeChange);
   document.getElementById('page').addEventListener('change', onPageInput);
@@ -79,9 +97,186 @@ function bindUI(){
   document.getElementById('page-toggle').addEventListener('click', togglePage);
   document.getElementById('upload-btn').addEventListener('click', ()=>document.getElementById('file-input').click());
   document.getElementById('file-input').addEventListener('change', onFileSelect);
+  document.getElementById('pdf-multi-select').addEventListener('click', toggleMultiSelect);
   document.getElementById('pdf-prev').addEventListener('click', onPdfPrev);
   document.getElementById('pdf-next').addEventListener('click', onPdfNext);
+  document.getElementById('pdf-ai').addEventListener('click', onPdfAi);
+  document.getElementById('pdf-json-view').addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/questions');
+      const data = await res.json();
+      document.getElementById('ai-result-title').innerText = 'ground_truth.json';
+      document.getElementById('ai-json-display').textContent = JSON.stringify(formatInstanceJSON(data), null, 2);
+      document.getElementById('add-btn-container').style.display = 'none';
+      document.getElementById('ai-result-container').style.display = 'flex';
+    } catch (e) {
+      alert('Failed to load JSON: ' + e.message);
+    }
+  });
+  document.getElementById('close-ai-btn').addEventListener('click', () => {
+    document.getElementById('ai-result-container').style.display = 'none';
+  });
+  document.getElementById('add-instance-btn').addEventListener('click', onAddInstance);
+  document.getElementById('export-instances-btn').addEventListener('click', async () => {
+    if (confirm("Would you like to add the added instances?")) {
+      try {
+        const res = await fetch('/api/export-questions', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+          alert(`Exported ${data.count} instances to ground_truth.json!`);
+          state.sessionCreated = [];
+          refreshCreateLogs();
+          await loadData();
+        } else {
+          alert('Failed to export: ' + data.error);
+        }
+      } catch (e) {
+        alert('Error exporting: ' + e.message);
+      }
+    }
+  });
   document.getElementById('delete-denied').addEventListener('click', onDeleteDenied);
+}
+
+function toggleMultiSelect() {
+  if (!state.currentPdfFile) return;
+  if (state.selectedPages.has(state.currentPdfPage)) {
+    state.selectedPages.delete(state.currentPdfPage);
+  } else {
+    state.selectedPages.add(state.currentPdfPage);
+  }
+  updateMultiSelectBtn();
+}
+
+function updateMultiSelectBtn() {
+  const btn = document.getElementById('pdf-multi-select');
+  if (state.selectedPages.has(state.currentPdfPage)) {
+    btn.style.color = '#4CAF50';
+    btn.style.borderColor = '#4CAF50';
+    btn.innerText = 'Selected ✓';
+  } else {
+    btn.style.color = '';
+    btn.style.borderColor = '';
+    btn.innerText = 'Multi-select';
+  }
+}
+
+async function onPdfAi() {
+  if(!state.currentPdfFile) return;
+  
+  const btn = document.getElementById('pdf-ai');
+  const originalText = btn.innerText;
+  btn.innerText = "Generating...";
+  btn.disabled = true;
+  
+  try {
+    let pagesToSend = [];
+    if (state.selectedPages.size > 0) {
+      // Use selected pages
+      pagesToSend = Array.from(state.selectedPages).sort((a, b) => a - b);
+    } else {
+      // Default to current page if nothing selected
+      pagesToSend = [state.currentPdfPage];
+    }
+    
+    // We pass 1-indexed to backend since render_pdf_page uses 1-indexed
+    const apiPages = pagesToSend.map(p => p + 1);
+    
+    const response = await fetch(`/api/generate-question`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: state.currentPdfFile, pages: apiPages })
+    });
+    
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error || 'Failed to generate question');
+    
+    const baseFilename = state.currentPdfFile.split('/').pop();
+    const relevantArray = pagesToSend.map(p => ({
+      source: baseFilename,
+      pages: [p]
+    }));
+    
+    const newInstance = {
+      question: data.question,
+      relevant: relevantArray
+    };
+    
+    const resultContainer = document.getElementById('ai-result-container');
+    const display = document.getElementById('ai-json-display');
+    
+    document.getElementById('ai-result-title').innerText = 'Generated Instance';
+    document.getElementById('add-btn-container').style.display = 'flex';
+    
+    display.textContent = JSON.stringify(newInstance, null, 2);
+    resultContainer.style.display = 'flex';
+    
+  } catch (err) {
+    alert(`AI Generation failed: ${err.message}`);
+  } finally {
+    btn.innerText = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function onAddInstance() {
+  const text = document.getElementById('ai-json-display').textContent;
+  if (!text) return;
+  
+  const btn = document.getElementById('add-instance-btn');
+  btn.disabled = true;
+  btn.innerText = "Adding...";
+  
+  try {
+    const instance = JSON.parse(text);
+    const res = await fetch('/api/add-question', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(instance)
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      state.sessionCreated.push({
+        globalIndex: data.global_index,
+        question: instance
+      });
+      refreshCreateLogs();
+      document.getElementById('ai-result-container').style.display = 'none';
+    } else {
+      throw new Error(data.error || 'Failed to add');
+    }
+  } catch (e) {
+    alert('Error adding instance: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "Add";
+  }
+}
+
+function refreshCreateLogs() {
+  const logs = document.getElementById('create-logs');
+  if (!logs) return;
+  logs.innerHTML = '';
+  
+  for (const item of state.sessionCreated) {
+    const q = item.question;
+    const gIdx = item.globalIndex;
+    
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    div.style.cursor = 'pointer';
+    div.innerHTML = `<span class="qnum" style="font-weight:bold;">Q${gIdx + 1}</span> <span class="stat">Added</span>`;
+    
+    div.addEventListener('click', () => {
+      document.getElementById('ai-result-title').innerText = `Added Instance Q${gIdx + 1}`;
+      document.getElementById('add-btn-container').style.display = 'none';
+      document.getElementById('ai-json-display').textContent = JSON.stringify(formatInstanceJSON(q), null, 2);
+      document.getElementById('ai-result-container').style.display = 'flex';
+    });
+    
+    logs.appendChild(div);
+  }
 }
 
 async function onDeleteDenied() {
@@ -303,7 +498,7 @@ async function showCurrent(){
 
 async function renderPageWithPyMuPDF(filename, pageNum, viewerArea){
   try{
-    const encodedFilename = encodeURIComponent(filename);
+    const encodedFilename = filename.split('/').map(encodeURIComponent).join('/');
     const response = await fetch(`/api/pdf-page/${encodedFilename}/${pageNum}`);
     
     if(!response.ok){
@@ -385,15 +580,52 @@ async function loadPdfList(){
     const list = document.getElementById('pdf-list');
     list.innerHTML = '';
     
-    if(data.files && data.files.length > 0){
-      for(const file of data.files){
-        const item = document.createElement('div');
-        item.className = 'pdf-item';
-        item.innerHTML = `<span class="pdf-item-name">${file}</span>`;
-        item.addEventListener('click', () => viewPdf(file));
-        list.appendChild(item);
+    let hasPdfs = false;
+    
+    if(data.folders){
+      // Sort folders so '/' is at the top
+      const folderKeys = Object.keys(data.folders).sort((a, b) => a === '/' ? -1 : (b === '/' ? 1 : a.localeCompare(b)));
+      
+      for (const folder of folderKeys) {
+        const pdfs = data.folders[folder];
+        if (pdfs.length === 0) continue;
+        hasPdfs = true;
+        
+        if (folder === '/') {
+          for (const file of pdfs) {
+            list.appendChild(createPdfItem(file, file));
+          }
+        } else {
+          const folderDiv = document.createElement('div');
+          folderDiv.className = 'pdf-folder';
+          
+          const folderHeader = document.createElement('div');
+          folderHeader.className = 'pdf-folder-header';
+          folderHeader.innerHTML = `<span>📁 ${folder}</span><span class="folder-arrow">▼</span>`;
+          
+          const folderContent = document.createElement('div');
+          folderContent.className = 'pdf-folder-content';
+          folderContent.style.display = 'none'; // Collapsed by default
+          
+          folderHeader.addEventListener('click', () => {
+            const isCollapsed = folderContent.style.display === 'none';
+            folderContent.style.display = isCollapsed ? 'block' : 'none';
+            folderHeader.querySelector('.folder-arrow').innerText = isCollapsed ? '▲' : '▼';
+          });
+          
+          for (const file of pdfs) {
+            const fullPath = folder + '/' + file;
+            folderContent.appendChild(createPdfItem(file, fullPath));
+          }
+          
+          folderDiv.appendChild(folderHeader);
+          folderDiv.appendChild(folderContent);
+          list.appendChild(folderDiv);
+        }
       }
-    } else {
+    }
+    
+    if(!hasPdfs){
       list.innerHTML = '<p style="color:#999; padding:8px; font-size:12px;">No PDF files yet</p>';
     }
   }catch(e){
@@ -401,13 +633,23 @@ async function loadPdfList(){
   }
 }
 
+function createPdfItem(displayName, fullPath) {
+  const item = document.createElement('div');
+  item.className = 'pdf-item';
+  item.dataset.path = fullPath;
+  item.innerHTML = `<span class="pdf-item-name">${displayName}</span>`;
+  item.addEventListener('click', () => viewPdf(fullPath));
+  return item;
+}
+
 async function viewPdf(filename){
   state.currentPdfFile = filename;
   state.currentPdfPage = 0;
+  if (state.selectedPages) state.selectedPages.clear();
   
   // Update active state
   document.querySelectorAll('.pdf-item').forEach(item => {
-    if(item.querySelector('.pdf-item-name').innerText === filename){
+    if(item.dataset.path === filename){
       item.classList.add('active');
     } else {
       item.classList.remove('active');
@@ -422,7 +664,7 @@ async function displayPdfPage(pageNum){
   if(!state.currentPdfFile) return;
   
   try{
-    const encodedFilename = encodeURIComponent(state.currentPdfFile);
+    const encodedFilename = state.currentPdfFile.split('/').map(encodeURIComponent).join('/');
     const response = await fetch(`/api/pdf-page/${encodedFilename}/${pageNum + 1}`);
     
     if(!response.ok) throw new Error('Failed to load page');
@@ -442,6 +684,7 @@ async function displayPdfPage(pageNum){
     
     state.currentPdfPage = pageNum;
     document.getElementById('pdf-page-info').innerText = `Page ${pageNum + 1}`;
+    updateMultiSelectBtn();
   }catch(e){
     document.getElementById('pdf-viewer').innerHTML = `<p style="color:#a00; padding:12px;">Failed to load PDF page: ${e.message}</p>`;
   }
