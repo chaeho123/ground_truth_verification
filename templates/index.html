@@ -5,35 +5,76 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ground Truth Verifier</title>
     <link rel="stylesheet" href="/static/style.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.349/pdf.min.js"></script>
   </head>
   <body>
     <div class="container">
+      <!-- Sidebar -->
       <div class="sidebar">
-        <h2>Controls</h2>
-        <label>Range (start-end) <span id="total" class="total-count"></span></label>
-        <input id="range" placeholder="1-10" />
-        <div class="buttons">
-          <button id="start">Start</button>
-          <button id="pause">Pause</button>
-          <button id="refresh">Refresh</button>
+        <div class="sidebar-header">
+          <h2>Controls</h2>
+          <button id="page-toggle" class="page-toggle-btn" title="Switch to Ground Truth Creation">⚙️</button>
         </div>
-        <div class="nav">
-          <button id="prev">Prev</button>
-          <button id="next">Next</button>
+        
+        <!-- Verification Page Controls -->
+        <div id="verify-controls" class="page-section active">
+          <div class="controls-row">
+            <div class="left-col">
+              <label>Range (start-end) <span id="total" class="total-count"></span></label>
+              <input id="range" placeholder="1-95" />
+            </div>
+          </div>
+
+          <label style="margin-top: 12px; display:block;">Page</label>
+          <input id="page" type="number" placeholder="1" min="1" />
+
+          <div class="control-row">
+            <button id="prev" class="control-btn">← Prev</button>
+            <button id="next" class="control-btn">Next →</button>
+            <button id="refresh" class="control-btn">Refresh</button>
+          </div>
+
+          <div id="status" class="status"></div>
+          <div id="logs" class="logs"></div>
+          <button id="delete-denied" class="control-btn" style="margin-top: 12px; width: 100%; color: #c62828; border-color: #c62828;">Delete Denied</button>
         </div>
-        <div class="actions">
-          <button id="approve" class="approve">Approve</button>
-          <button id="deny" class="deny">Deny</button>
+
+        <!-- Ground Truth Creation Controls -->
+        <div id="create-controls" class="page-section">
+          <label style="margin-bottom: 8px; display:block;">Upload PDF</label>
+          <button id="upload-btn" class="upload-icon-btn" title="Click to upload PDF files">📁</button>
+          <input type="file" id="file-input" multiple accept=".pdf" style="display:none;" />
+          
+          <label style="margin-top: 16px; display:block;">Files</label>
+          <div id="pdf-list" class="pdf-list"></div>
         </div>
-        <div id="status" class="status"></div>
-        <div id="logs" class="logs"></div>
       </div>
 
+      <!-- Main Content Area -->
       <div class="main">
-        <h1 id="qnum">Question</h1>
-        <div id="question" class="question"></div>
-        <div id="viewer" class="viewer"></div>
+        <!-- Verification Page -->
+        <div id="verify-page" class="page-section active">
+          <h1 id="qnum">Question</h1>
+          <div class="question-row">
+            <div id="question" class="question"></div>
+            <div class="question-actions">
+              <button id="q-approve" class="control-btn approve">Approve</button>
+              <button id="q-deny" class="control-btn deny">Deny</button>
+            </div>
+          </div>
+          <div id="viewer" class="viewer"></div>
+        </div>
+
+        <!-- Ground Truth Creation Page -->
+        <div id="create-page" class="page-section">
+          <div id="pdf-viewer" class="pdf-viewer">
+            <p style="color:#999; text-align:center; padding-top:50px;">Select a PDF to view</p>
+          </div>
+          <div class="pdf-nav">
+            <button id="pdf-prev" class="pdf-nav-btn">← Prev</button>
+            <span id="pdf-page-info" class="pdf-page-info">No PDF</span>
+            <button id="pdf-next" class="pdf-nav-btn">Next →</button>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -3,44 +3,102 @@ const state = {
   results: {},
   idxList: [],
   pos: 0,
-  paused: true,
+  isRangeMode: false,
+  fullRangeIdxList: [],
+  currentPage: 'verify', // 'verify' or 'create'
+  pdfStates: {}, // Track open PDFs per question
+  pdfIndex: 0, // Current PDF being viewed for enter key
+  // Creation page state
+  currentPdfFile: null,
+  currentPdfPage: 0,
+  pdfPageCount: 0,
 };
 
-async function ensurePdfJs(){
-  if(window.pdfjsLib) return window.pdfjsLib;
-  return new Promise((resolve, reject)=>{
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.349/pdf.min.js';
-    s.onload = ()=>{
-      try{
-        const lib = window.pdfjsLib;
-        lib.GlobalWorkerOptions.workerUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.349/pdf.worker.min.js';
-        resolve(lib);
-      }catch(e){ reject(e); }
-    };
-    s.onerror = (e)=> reject(new Error('Failed to load pdf.js'));
-    document.head.appendChild(s);
-  });
+async function init(){
+  bindUI();
+  await loadData();
+  // Add keyboard navigation
+  document.addEventListener('keydown', onKeyDown);
+  // Load PDF list for creation page
+  loadPdfList();
 }
 
-async function init(){
-  try{ await ensurePdfJs(); }catch(e){ console.warn('pdf.js failed to load:', e); }
+async function loadData(){
   const res = await fetch('/api/questions');
   state.questions = await res.json();
   const r = await fetch('/api/results');
   state.results = await r.json();
-  bindUI();
+  
+  // Initialize full range (1-95 or total count)
+  const totalQuestions = state.questions.length;
+  state.fullRangeIdxList = Array.from({length: totalQuestions}, (_, i) => i);
+  
+  // If we were in range mode, try to preserve it or reset if invalid
+  if(state.isRangeMode){
+    const rangeInput = document.getElementById('range').value.trim();
+    if(rangeInput) {
+      const range = parseRange(rangeInput);
+      state.idxList = [];
+      for(let i=range[0]; i<=range[1] && i<totalQuestions; i++) state.idxList.push(i);
+    } else {
+      state.idxList = [...state.fullRangeIdxList];
+      state.isRangeMode = false;
+    }
+  } else {
+    state.idxList = [...state.fullRangeIdxList];
+  }
+  
+  // Keep pos within bounds
+  if(state.pos >= state.idxList.length) {
+    state.pos = Math.max(0, state.idxList.length - 1);
+  }
+  
   document.getElementById('total').innerText = ` / ${state.questions.length} total`;
+  document.getElementById('range').placeholder = `1-${state.questions.length}`;
+  
+  // Refresh UI
+  if(state.idxList.length > 0) {
+    showCurrent();
+  } else {
+    clearViewer();
+    document.getElementById('qnum').innerText = 'No Questions Available';
+    document.getElementById('question').innerText = '';
+    document.getElementById('status').innerText = '';
+  }
+  refreshLogs();
 }
 
 function bindUI(){
-  document.getElementById('start').addEventListener('click', onStart);
-  document.getElementById('pause').addEventListener('click', onPause);
+  document.getElementById('range').addEventListener('change', onRangeChange);
+  document.getElementById('page').addEventListener('change', onPageInput);
   document.getElementById('next').addEventListener('click', onNext);
   document.getElementById('prev').addEventListener('click', onPrev);
-  document.getElementById('approve').addEventListener('click', ()=>onSet('approved'));
-  document.getElementById('deny').addEventListener('click', ()=>onSet('denied'));
   document.getElementById('refresh').addEventListener('click', onRefresh);
+  document.getElementById('q-approve').addEventListener('click', ()=>onSet('approved'));
+  document.getElementById('q-deny').addEventListener('click', ()=>onSet('denied'));
+  document.getElementById('page-toggle').addEventListener('click', togglePage);
+  document.getElementById('upload-btn').addEventListener('click', ()=>document.getElementById('file-input').click());
+  document.getElementById('file-input').addEventListener('change', onFileSelect);
+  document.getElementById('pdf-prev').addEventListener('click', onPdfPrev);
+  document.getElementById('pdf-next').addEventListener('click', onPdfNext);
+  document.getElementById('delete-denied').addEventListener('click', onDeleteDenied);
+}
+
+async function onDeleteDenied() {
+  if (confirm("Would you like to delete the denied instances?")) {
+    try {
+      const res = await fetch('/api/delete-denied', {method: 'POST'});
+      const data = await res.json();
+      if (data.success) {
+        alert(`Deleted ${data.deleted_count} denied instances.`);
+        await loadData();
+      } else {
+        alert('Failed to delete denied instances.');
+      }
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
+  }
 }
 
 function parseRange(str){
@@ -50,19 +108,120 @@ function parseRange(str){
   return [0, state.questions.length-1];
 }
 
-function onStart(){
-  const range = parseRange(document.getElementById('range').value);
+function onRangeChange(){
+  const rangeInput = document.getElementById('range').value.trim();
+  if(!rangeInput) {
+    // If range is cleared, go back to full range
+    state.idxList = [...state.fullRangeIdxList];
+    state.isRangeMode = false;
+    state.pos = 0;
+    showCurrent();
+    refreshLogs();
+    return;
+  }
+  
+  const range = parseRange(rangeInput);
   state.idxList = [];
   for(let i=range[0]; i<=range[1] && i<state.questions.length; i++) state.idxList.push(i);
+  state.isRangeMode = true;
   state.pos = 0;
-  state.paused = false;
   showCurrent();
   refreshLogs();
 }
 
-function onPause(){
-  state.paused = !state.paused;
-  document.getElementById('pause').innerText = state.paused ? 'Resume' : 'Pause';
+function onPageInput(){
+  const pageInputValue = document.getElementById('page').value.trim();
+  if(!pageInputValue) return;
+  
+  const pageNum = parseInt(pageInputValue, 10);
+  if(isNaN(pageNum) || pageNum < 1 || pageNum > state.questions.length) {
+    alert(`Please enter a valid page number between 1 and ${state.questions.length}`);
+    return;
+  }
+  
+  // Jump to the specific page in the full range
+  state.idxList = [...state.fullRangeIdxList];
+  state.isRangeMode = false;
+  state.pos = pageNum - 1;
+  
+  // Clear the page input
+  document.getElementById('page').value = '';
+  
+  showCurrent();
+  refreshLogs();
+}
+
+function onKeyDown(event){
+  if(state.currentPage === 'verify') {
+    if(event.key === 'a' || event.key === 'A') {
+      event.preventDefault();
+      onSet('approved');
+    } else if(event.key === 'd' || event.key === 'D') {
+      event.preventDefault();
+      onSet('denied');
+    } else if(event.key === 'Enter') {
+      event.preventDefault();
+      openNextPdf();
+    } else if(event.key === 'ArrowRight') {
+      event.preventDefault();
+      onNext();
+    } else if(event.key === 'ArrowLeft') {
+      event.preventDefault();
+      onPrev();
+    }
+  } else if (state.currentPage === 'create') {
+    if(event.key === 'ArrowRight') {
+      event.preventDefault();
+      onPdfNext();
+    } else if(event.key === 'ArrowLeft') {
+      event.preventDefault();
+      onPdfPrev();
+    }
+  }
+  // ArrowUp and ArrowDown are left for natural scrolling
+}
+
+function openNextPdf(){
+  const idx = state.idxList[state.pos];
+  const q = state.questions[idx];
+  if(!q.relevant || q.relevant.length === 0) return;
+  
+  // Flatten list of all pages across all PDFs
+  const allPages = [];
+  for(let i = 0; i < q.relevant.length; i++){
+    for(let p of q.relevant[i].pages){
+      allPages.push({pdfIndex: i, pageNum: p});
+    }
+  }
+  
+  if(allPages.length === 0) return;
+  
+  // Get current PDF state for this question
+  if(!state.pdfStates[idx]) state.pdfStates[idx] = 0;
+  
+  const current = state.pdfStates[idx];
+  if(current < allPages.length){
+    const {pdfIndex, pageNum} = allPages[current];
+    const file = q.relevant[pdfIndex].source;
+    
+    // Find the button and click it
+    const buttons = document.querySelectorAll('.page-btn');
+    if(buttons.length > 0){
+      // Click the button for this page
+      const globalPageIndex = allPages.slice(0, current).reduce((sum, p, i) => sum + (i === pdfIndex ? 1 : 0), 0);
+      for(let btn of buttons){
+        const btnText = btn.innerText;
+        if(btnText.includes(`Page ${pageNum + 1}`)){
+          btn.click();
+          state.pdfStates[idx] = current + 1;
+          return;
+        }
+      }
+    }
+  } else {
+    // Reset cycle
+    state.pdfStates[idx] = 0;
+  }
 }
 
 function onNext(){
@@ -75,7 +234,13 @@ async function onSet(status){
   await fetch('/api/submit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index: idx, status})});
   state.results[idx] = {status};
   refreshLogs();
-  if(!state.paused){ if(state.pos < state.idxList.length-1){ state.pos++; showCurrent(); } else { document.getElementById('status').innerText='Done'; }}
+  // Auto-advance to the next question if available
+  if(state.pos < state.idxList.length-1){
+    state.pos++;
+    showCurrent();
+  } else {
+    document.getElementById('status').innerText = 'Done';
+  }
 }
 
 function clearViewer(){
@@ -93,10 +258,11 @@ async function showCurrent(){
   // Create pressable bars for PDFs and pages (lazy load pages on click)
   for(const rel of q.relevant){
     const file = rel.source;
-    const url = `/data/${encodeURIComponent(file)}`;
     const container = document.createElement('div'); container.className='pdf-block';
     const header = document.createElement('div'); header.className='file-header';
-    const title = document.createElement('div'); title.className='pdf-title'; title.innerText = file; header.appendChild(title);
+    const title = document.createElement('div'); title.className='pdf-title'; title.innerText = file;
+    // right side: page buttons area
+    const headerRight = document.createElement('div'); headerRight.className = 'header-right';
     const pagesBar = document.createElement('div'); pagesBar.className='pages-bar';
     for(const p of rel.pages){
       const btn = document.createElement('button'); btn.className='page-btn'; btn.innerText = `Page ${p+1}`;
@@ -113,24 +279,19 @@ async function showCurrent(){
         viewerArea.dataset.current = String(targetPage);
         const loading = document.createElement('div'); loading.className = 'pdf-loading'; loading.innerText = 'Loading...';
         viewerArea.appendChild(loading);
-        if(window.pdfjsLib){
-          const canvas = document.createElement('canvas'); canvas.className='pdf-canvas';
-          viewerArea.appendChild(canvas);
-          try{
-            await renderPage(url, targetPage, canvas);
-            if(loading.parentElement) loading.remove();
-          }catch(e){
-            if(loading.parentElement) loading.remove();
-            viewerArea.innerHTML = `<object data="${url}#page=${targetPage}" type="application/pdf" width="100%" height="700px"><p>PDF preview not available.</p></object>`;
-          }
-        }else{
-          // fallback to browser PDF viewer
-          viewerArea.innerHTML = `<object data="${url}#page=${targetPage}" type="application/pdf" width="100%" height="700px"><p>PDF preview not available.</p></object>`;
+        try{
+          await renderPageWithPyMuPDF(file, targetPage, viewerArea);
+          if(loading.parentElement) loading.remove();
+        }catch(e){
+          if(loading.parentElement) loading.remove();
+          viewerArea.innerHTML = `<div style="color:#a00;padding:12px">Failed to load PDF page: ${e.message}</div>`;
         }
       });
       pagesBar.appendChild(btn);
     }
-    header.appendChild(pagesBar);
+    headerRight.appendChild(pagesBar);
+    header.appendChild(title);
+    header.appendChild(headerRight);
     container.appendChild(header);
     const viewerArea = document.createElement('div'); viewerArea.className='file-viewer';
     container.appendChild(viewerArea);
@@ -140,23 +301,34 @@ async function showCurrent(){
   refreshLogs();
 }
 
-async function renderPage(url, pageNum, canvas){
-  if(!window.pdfjsLib){
-    const p = canvas.parentElement;
-    p.innerHTML = `<div style="color:#a00;padding:12px">PDF renderer unavailable.</div>`;
-    return;
-  }
+async function renderPageWithPyMuPDF(filename, pageNum, viewerArea){
   try{
-    const loadingTask = pdfjsLib.getDocument(url);
-    const pdf = await loadingTask.promise;
-    if(pageNum > pdf.numPages) return;
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({scale:1.2});
-    canvas.width = viewport.width; canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d');
-    await page.render({canvasContext: ctx, viewport}).promise;
+    const encodedFilename = encodeURIComponent(filename);
+    const response = await fetch(`/api/pdf-page/${encodedFilename}/${pageNum}`);
+    
+    if(!response.ok){
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to render page');
+    }
+    
+    const data = await response.json();
+    
+    if(!data.success){
+      throw new Error(data.error || 'Failed to render page');
+    }
+    
+    // Create image element to display the rendered page
+    const img = document.createElement('img');
+    img.src = data.image;
+    img.className = 'pdf-page-image';
+    img.style.maxWidth = '100%';
+    img.style.height = 'auto';
+    img.style.border = '1px solid #ccc';
+    img.style.display = 'block';
+    
+    viewerArea.appendChild(img);
   }catch(err){
-    const parent = canvas.parentElement;
+    const parent = viewerArea;
     parent.innerHTML = `<div style="color:#a00;padding:12px">Failed to load PDF page: ${err.message}</div>`;
   }
 }
@@ -189,3 +361,138 @@ async function onRefresh(){
 }
 
 init();
+
+/* Page Toggle and Ground Truth Creation Functions */
+
+function togglePage(){
+  state.currentPage = state.currentPage === 'verify' ? 'create' : 'verify';
+  
+  // Toggle page sections
+  document.querySelectorAll('.page-section').forEach(section => section.classList.remove('active'));
+  if(state.currentPage === 'verify'){
+    document.getElementById('verify-controls').classList.add('active');
+    document.getElementById('verify-page').classList.add('active');
+  } else {
+    document.getElementById('create-controls').classList.add('active');
+    document.getElementById('create-page').classList.add('active');
+  }
+}
+
+async function loadPdfList(){
+  try{
+    const res = await fetch('/api/pdf-list');
+    const data = await res.json();
+    const list = document.getElementById('pdf-list');
+    list.innerHTML = '';
+    
+    if(data.files && data.files.length > 0){
+      for(const file of data.files){
+        const item = document.createElement('div');
+        item.className = 'pdf-item';
+        item.innerHTML = `<span class="pdf-item-name">${file}</span>`;
+        item.addEventListener('click', () => viewPdf(file));
+        list.appendChild(item);
+      }
+    } else {
+      list.innerHTML = '<p style="color:#999; padding:8px; font-size:12px;">No PDF files yet</p>';
+    }
+  }catch(e){
+    console.error('Failed to load PDF list:', e);
+  }
+}
+
+async function viewPdf(filename){
+  state.currentPdfFile = filename;
+  state.currentPdfPage = 0;
+  
+  // Update active state
+  document.querySelectorAll('.pdf-item').forEach(item => {
+    if(item.querySelector('.pdf-item-name').innerText === filename){
+      item.classList.add('active');
+    } else {
+      item.classList.remove('active');
+    }
+  });
+  
+  // Load first page
+  await displayPdfPage(0);
+}
+
+async function displayPdfPage(pageNum){
+  if(!state.currentPdfFile) return;
+  
+  try{
+    const encodedFilename = encodeURIComponent(state.currentPdfFile);
+    const response = await fetch(`/api/pdf-page/${encodedFilename}/${pageNum + 1}`);
+    
+    if(!response.ok) throw new Error('Failed to load page');
+    
+    const data = await response.json();
+    if(!data.success) throw new Error(data.error || 'Failed to load page');
+    
+    const viewer = document.getElementById('pdf-viewer');
+    viewer.innerHTML = '';
+    
+    const img = document.createElement('img');
+    img.src = data.image;
+    img.style.maxWidth = '100%';
+    img.style.maxHeight = '100%';
+    img.style.objectFit = 'contain';
+    viewer.appendChild(img);
+    
+    state.currentPdfPage = pageNum;
+    document.getElementById('pdf-page-info').innerText = `Page ${pageNum + 1}`;
+  }catch(e){
+    document.getElementById('pdf-viewer').innerHTML = `<p style="color:#a00; padding:12px;">Failed to load PDF page: ${e.message}</p>`;
+  }
+}
+
+function onPdfPrev(){
+  if(state.currentPdfPage > 0){
+    displayPdfPage(state.currentPdfPage - 1);
+  }
+}
+
+function onPdfNext(){
+  if(state.currentPdfFile){
+    // Try to load next page - if it fails, we're at the end
+    displayPdfPage(state.currentPdfPage + 1);
+  }
+}
+
+function setupDropzone(){
+  // Removed - no longer used
+}
+
+async function onFileSelect(e){
+  uploadPdfs(e.target.files);
+  e.target.value = ''; // Reset file input
+}
+
+async function uploadPdfs(files){
+  if(files.length === 0) return;
+  
+  const formData = new FormData();
+  for(let file of files){
+    if(file.type === 'application/pdf' || file.name.endsWith('.pdf')){
+      formData.append('files', file);
+    }
+  }
+  
+  try{
+    const res = await fetch('/api/upload-pdf', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const data = await res.json();
+    if(data.success){
+      alert(`Uploaded: ${data.uploaded.join(', ')}`);
+      loadPdfList();
+    } else {
+      alert(`Error: ${data.error}`);
+    }
+  }catch(e){
+    alert(`Upload failed: ${e.message}`);
+  }
+}
