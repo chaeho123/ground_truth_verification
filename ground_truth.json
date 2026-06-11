@@ -1107,49 +1107,5 @@
         ]
       }
     ]
-  },
-  {
-    "question": "2016년 4월 서울 중앙대병원에서 진행된 이식수술에 사용된 맞춤 제작 두개골의 소재는 무엇인가요?",
-    "relevant": [
-      {
-        "source": "article_101.pdf",
-        "pages": [
-          2
-        ]
-      }
-    ]
-  },
-  {
-    "question": "북한 전략군이 8월 14일에 김정은에게 보고한 내용은 무엇입니까?",
-    "relevant": [
-      {
-        "source": "article_106.pdf",
-        "pages": [
-          2
-        ]
-      }
-    ]
-  },
-  {
-    "question": "소련이 R-11M을 개조하여 세계 최초로 성공한 것은 무엇입니까?",
-    "relevant": [
-      {
-        "source": "article_108.pdf",
-        "pages": [
-          6
-        ]
-      }
-    ]
-  },
-  {
-    "question": "영국이 제2차 세계대전의 교훈을 반영하여 NATO에 제안했던 탄약의 규격은 무엇인가요?",
-    "relevant": [
-      {
-        "source": "article_121.pdf",
-        "pages": [
-          5
-        ]
-      }
-    ]
   }
 ]

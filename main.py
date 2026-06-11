@@ -196,7 +196,7 @@ Strict Style & Formatting Constraints:
 
 Return only the question string (or the fallback text), without any quotes or markdown formatting."""
         else:
-            prompt = "You are an expert at creating reading comprehension questions. Please read this document page and create a single clear question that can be answered using *only* the information found on this specific page. Return only the question string, without any quotes or markdown formatting."
+            prompt = "You are an expert at creating highly detailed, professional reading comprehension questions. Please read this document page and create a single clear, sophisticated question that a user would ask an LLM, where answering it accurately strictly requires referencing the specific regulations, frameworks, definitions, or procedural conditions found on this page. The question must be written in a natural interrogative style ending with suffixes such as '~하는가?', '~사항은?', '~되는가?', or '~절차는?'. Also do not include phrases that explicitly reference the document itself, such as '제시된 자료에 따르면' or '본문에 의하면'. Return only the question string, without any quotes or markdown formatting."
             
         parts = [{"text": prompt}]
         
@@ -219,7 +219,7 @@ Return only the question string (or the fallback text), without any quotes or ma
             
         pdf_document.close()
         
-        API_KEY = "AQ.Ab8RN6KGFAgHBEH6sf3HkbMZ7_vNKnSuhGvPIHQvJ5SRzkrf4w"
+        API_KEY = ""
         # Try requested model first, then fallback
         models_to_try = [
             "gemini-3.5-flash", 

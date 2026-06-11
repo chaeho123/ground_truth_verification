@@ -103,12 +103,20 @@ function bindUI(){
   document.getElementById('pdf-ai').addEventListener('click', onPdfAi);
   document.getElementById('pdf-json-view').addEventListener('click', async () => {
     try {
+      const container = document.getElementById('ai-result-container');
+      const titleElement = document.getElementById('ai-result-title');
+      
+      if (container.style.display !== 'none' && titleElement.innerText === 'ground_truth.json') {
+        container.style.display = 'none';
+        return;
+      }
+      
       const res = await fetch('/api/questions');
       const data = await res.json();
-      document.getElementById('ai-result-title').innerText = 'ground_truth.json';
+      titleElement.innerText = 'ground_truth.json';
       document.getElementById('ai-json-display').textContent = JSON.stringify(formatInstanceJSON(data), null, 2);
       document.getElementById('add-btn-container').style.display = 'none';
-      document.getElementById('ai-result-container').style.display = 'flex';
+      container.style.display = 'flex';
     } catch (e) {
       alert('Failed to load JSON: ' + e.message);
     }
