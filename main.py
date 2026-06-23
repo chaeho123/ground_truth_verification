@@ -219,7 +219,7 @@ Return only the question string (or the fallback text), without any quotes or ma
             
         pdf_document.close()
         
-        API_KEY = "AQ.Ab8RN6JlkOp1VnOcmg1VverFWWyXWncJnSSEd1CBs4bfV9Ar3Q"
+        API_KEY = ""
         # Try requested model first, then fallback
         models_to_try = [
             "gemini-3.5-flash", 
